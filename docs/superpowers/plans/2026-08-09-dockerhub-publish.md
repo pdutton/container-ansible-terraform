@@ -226,10 +226,12 @@ Expected exactly:
 Then confirm the guard's message suits both callers:
 
 ```bash
-grep -n 'derive the tag set' Makefile | head -4
+grep -n 'refusing to derive the tag set' Makefile
 ```
 
-Expected: four ERROR messages, all naming `$(LOCAL_IMAGE):$*` and all saying "derive the tag set" rather than "tag". From `push-%` nothing is being tagged, so "refusing to tag" would be wrong there.
+Expected: exactly four lines, all `echo "ERROR: ...` and all naming `$(LOCAL_IMAGE):$*`. From `push-%` nothing is being tagged, so "refusing to tag" would be wrong there.
+
+Match on `refusing to derive the tag set`, not on `derive the tag set` alone: the explanatory comment above `TAG_SET_SH` contains the shorter phrase too, so the looser pattern returns five lines and a `head -4` would silently drop one of the real messages.
 
 - [ ] **Step 6: Rename `version-tag-%` to `tag-%` and apply the full set**
 
