@@ -41,6 +41,11 @@ support — use the ubuntu variants if you need those, or if you need glibc to e
 | `ubuntu-stable`      | `latest`, `ubuntu` |
 | `ubuntu-development` |                    |
 
+This repo's Tags list on Docker Hub also carries a version-shaped tag per variant
+(`<os>-<ansible-version>-<terraform-version>`). Those look like pins but are not: every tag here,
+version-shaped or not, is a moving pointer that a later rebuild can re-push at a new image. If you
+need reproducibility, pin by digest rather than by tag.
+
 ## Source
 
 Built from

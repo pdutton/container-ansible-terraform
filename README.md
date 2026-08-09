@@ -201,14 +201,28 @@ accident. (This is an accident guard, not a security boundary: `workflow_dispatc
 workflow file from the selected ref, so a branch that also edits the `if:` conditions could still
 publish.)
 
+Nothing here automatically checks which Terraform channel a `*-stable` or `*-development`
+Containerfile's `COPY --from` actually pulls from — a miswired one would publish a Terraform
+prerelease as `ubuntu-stable`, `ubuntu`, and `latest` with every gate above green. The only
+mitigation is a by-hand check, run before merging since merging to `master` is what publishes;
+see `CLAUDE.md`'s `## Publishing` section for it.
+
 Publishing needs two repository secrets, `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`, which the
-workflow feeds to `podman login docker.io`. A local `make push` needs the equivalent done by hand.
+workflow feeds to `podman login docker.io`. The token needs **write and delete** scope — delete is
+required by the `dockerhub-description` job, which replaces the Hub description rather than
+appending to it. A write-only token logs in and pushes all eleven tags fine, then fails that one
+job with an authorization error that reads like a wrong password rather than a wrong scope. A
+local `make push` needs the equivalent done by hand.
 
 CI builds pass `--pull`, so a CI publish always re-resolves both upstream images rather than
 reusing a cached layer. There is no scheduled rebuild, though: these images are composed entirely
 of upstream tags, so both inputs can move without anything in this repo changing, and a published
 image can sit arbitrarily far behind both. Refreshing them is a deliberate act — merge to `master`,
 or run the workflow from the Actions tab.
+
+A publish is also not atomic: if a job fails partway through a variant's tag loop, the tags
+already pushed in that run are live at the new image and the rest are stale until the job is
+re-run. See the comment above `push-%` in the `Makefile` for detail.
 
 ### The Docker Hub overview page
 

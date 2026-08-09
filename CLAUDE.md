@@ -87,6 +87,18 @@ See `docs/superpowers/specs/2026-08-09-dockerhub-publish-design.md` for the
 authority on the tag scheme, the no-intermediate-tag rule, the non-atomic push,
 and the registry coordinates. Read it before changing tags, the push, or CI.
 
+A publish is not atomic: `push-%`'s tag loop pushes one tag at a time, so a
+failure partway through leaves the tags already pushed in that run pointing at
+the new image and the rest still pointing at the old one. The failure is loud
+(non-zero exit), which is the requirement, but there is no rollback —
+re-running the job is what finishes the set.
+
+**Before merging, run the by-hand variant check** under *Do not add version or
+channel assertions to the smoke test* below. Merging to `master` is what
+publishes, and that check is the only thing that catches a miswired `COPY
+--from` sending a `*-stable` Containerfile at the wrong Terraform channel —
+nothing automated does.
+
 ## How versions are selected
 
 Not in this repo. The Ansible channel comes from the
@@ -132,8 +144,11 @@ for v in alpine-stable alpine-development ubuntu-stable ubuntu-development; do
 done
 ```
 
-Both `*-stable` rows must show a plain Terraform version with Ansible 13.x; both
-`*-development` rows a `-beta`/`-rc` version with Ansible 14.x.
+Both `*-stable` rows must show a plain Terraform version alongside the stable
+channel's Ansible bundle version; both `*-development` rows a `-beta`/`-rc`
+Terraform version alongside the development channel's Ansible bundle version.
+The two channels' Ansible majors are not named here on purpose — they change
+upstream, and a check that hardcoded them would go stale at the next bump.
 
 ## Conventions
 

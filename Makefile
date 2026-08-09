@@ -60,7 +60,7 @@ GIT_REV    := $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
 # $version is the COMPOSITE <ansible>-<terraform>, and the version tag uses it
 # whole. It is split here only to validate, never to build a tag.
 #
-# Four guards, in order, all before any tag is applied:
+# Five guards, in order, all before any tag is applied:
 #  1. The variant stem is exactly two '-'-separated words. os/channel come from
 #     word 1/2 of $* and silently discard anything past word 2, so a future
 #     variant such as ubuntu-stable-slim would compute os=ubuntu,
@@ -68,22 +68,30 @@ GIT_REV    := $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
 #     public registry. Checked by reassembling and comparing to $*, not by a
 #     case/glob: a shell `*` matches '-' too, so no bracket-class pattern can
 #     exclude extra segments.
-#  2. $version contains a '-' at all. $${version\#*-} returns the string
+#  2. $version is non-empty. push-% reads it from a label that could simply be
+#     absent; without this guard an empty $version falls through to guard 3
+#     and is reported as "contains no '-'", which names the wrong problem --
+#     there is no version at all, not a one-axis one.
+#  3. $version contains a '-' at all. $${version\#*-} returns the string
 #     UNCHANGED when it contains none, so a one-axis version like 13.0.0 would
-#     set av=tv=13.0.0, pass guard 3 twice, and publish alpine-13.0.0 -- a tag
+#     set av=tv=13.0.0, pass guard 4 twice, and publish alpine-13.0.0 -- a tag
 #     shaped like a version tag that names only one of the two axes.
-#  3. Both halves are X.Y.Z. Checked separately: because a glob `*` matches
+#  4. Both halves are X.Y.Z. Checked separately: because a glob `*` matches
 #     '-', that same pattern applied to the composite matches 13.0.0 alone.
 #     Splitting on the FIRST '-' is safe in both directions -- an Ansible
 #     bundle version is always X.Y.Z and never contains a '-', so a Terraform
 #     -beta/-rc suffix can only ever land in tv.
-#  4. The messages name the image and say "derive the tag set" rather than
+#  5. The messages name the image and say "derive the tag set" rather than
 #     "tag", because this now fires from push-% too, where nothing is tagged
 #     and $version came from a label rather than from two containers.
 TAG_SET_SH = os="$(word 1,$(subst -, ,$*))"; \
              channel="$(word 2,$(subst -, ,$*))"; \
              if [ -z "$$os" ] || [ -z "$$channel" ] || [ "$$os-$$channel" != "$*" ]; then \
                echo "ERROR: $(LOCAL_IMAGE):$*: variant stem is not exactly two non-empty '-'-separated words (<os>-<channel>); refusing to derive the tag set, since word 1/word 2 would silently drop the rest and could overwrite another variant's tags" >&2; \
+               exit 1; \
+             fi; \
+             if [ -z "$$version" ]; then \
+               echo "ERROR: $(LOCAL_IMAGE):$*: carries no usable org.opencontainers.image.version label; refusing to derive the tag set" >&2; \
                exit 1; \
              fi; \
              case "$$version" in \
