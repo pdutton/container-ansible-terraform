@@ -105,14 +105,15 @@ TAG_SET_SH = os="$(word 1,$(subst -, ,$*))"; \
              if [ "$*" = "$(LATEST_VARIANT)" ]; then tags="$$tags latest"; fi
 
 .DEFAULT_GOAL := help
-.PHONY: help build test clean
+.PHONY: help build test push clean
 
 help:
 	@echo "Targets:"
 	@echo "  build                 Build all variants"
 	@echo "  test                  Smoke-test all variants"
+	@echo "  push                  Push all variants to $(REGISTRY)/$(IMAGE)"
 	@echo "  clean                 Remove all tagged images built by this repo"
-	@$(foreach v,$(VARIANTS),echo "  build-$(v)"; echo "  test-$(v)";)
+	@$(foreach v,$(VARIANTS),echo "  build-$(v)"; echo "  test-$(v)"; echo "  push-$(v)";)
 	@echo
 	@echo "Variants: $(VARIANTS)"
 	@echo
@@ -164,6 +165,40 @@ tag-%:
 test-%: build-%
 	$(PODMAN) run --rm -v ./test:/apps:ro,z $(LOCAL_IMAGE):$* \
 	  ansible-playbook -i localhost, -c local smoke.yml
+
+# Mirror every tag in the set to $(REGISTRY). Depends on test-%, so a
+# smoke-test failure blocks the publish and a broken image cannot reach the
+# registry through this path.
+#
+# That guarantee holds only within ONE make invocation: build-%/test-%/push-%
+# match no real files, so a second, separate `make` in the same job re-runs the
+# whole chain rather than seeing it as satisfied. This is why the workflow
+# calls make exactly once per job.
+#
+# The version is read back off the label tag-% applied rather than by running
+# the containers again -- an inspect, not two container starts.
+#
+# The push source is explicitly localhost-qualified ($(LOCAL_IMAGE)), not a
+# bare short name -- a bare name can resolve to a non-localhost repo when
+# that's the only match, which would make this, the highest-stakes line in the
+# repo, depend on an implicit tie-break. podman push SOURCE DESTINATION never
+# creates a registry-qualified local tag, so `clean` keeps matching the
+# complete set.
+#
+# Not atomic: a failure partway through the loop leaves the earlier tags in
+# this run already published and the remaining ones stale. The failure is loud
+# (non-zero exit), which is the requirement, but it is not a rollback.
+push-%: test-%
+	@set -eu; \
+	version=$$($(PODMAN) image inspect \
+	  --format '{{index .Labels "org.opencontainers.image.version"}}' $(LOCAL_IMAGE):$*); \
+	$(TAG_SET_SH); \
+	for t in $$tags; do \
+	  echo "Pushing $(REGISTRY)/$(IMAGE):$$t"; \
+	  $(PODMAN) push "$(LOCAL_IMAGE):$$t" "$(REGISTRY)/$(IMAGE):$$t"; \
+	done
+
+push: $(addprefix push-,$(VARIANTS))
 
 # Removes only the tags this repo applies. It does NOT reclaim the orphaned
 # <none> base layers each tag-% build leaves behind -- podman rmi on a
