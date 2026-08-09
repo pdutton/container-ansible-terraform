@@ -42,7 +42,7 @@ Delivers a buildable, testable `alpine-stable` image. `VARIANTS` holds only that
 - Consumes: nothing (first task).
 - Produces: `make build-<variant>` and `make test-<variant>` pattern rules; `LOCAL_IMAGE = localhost/ansible-terraform`; the smoke playbook at `test/smoke.yml` expecting the config at `/apps/terraform/main.tf` and asserting the string `ok-from-terraform`.
 
-- [ ] **Step 1: Write the failing test — the Terraform config and the smoke playbook**
+- [x] **Step 1: Write the failing test — the Terraform config and the smoke playbook**
 
 `test/terraform/main.tf`:
 
@@ -108,13 +108,13 @@ output "message" {
         fail_msg: "expected ok-from-terraform, got {{ tf.outputs | default('no outputs') }}"
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `make test-alpine-stable`
 
 Expected: FAIL — `make: *** No rule to make target 'test-alpine-stable'`. There is no Makefile yet. This confirms the test cannot pass by accident before the image exists.
 
-- [ ] **Step 3: Write `.gitignore` and `.dockerignore`**
+- [x] **Step 3: Write `.gitignore` and `.dockerignore`**
 
 `.gitignore` (vim artifacts, matching both upstream repos):
 
@@ -152,7 +152,7 @@ LICENSE
 CLAUDE.md
 ```
 
-- [ ] **Step 4: Write `Containerfile.alpine-stable`**
+- [x] **Step 4: Write `Containerfile.alpine-stable`**
 
 ```dockerfile
 # The terraform stage is a copy source only -- none of its layers are inherited.
@@ -176,7 +176,7 @@ WORKDIR /apps
 CMD ["terraform", "-help"]
 ```
 
-- [ ] **Step 5: Write the minimal `Makefile`**
+- [x] **Step 5: Write the minimal `Makefile`**
 
 ```make
 IMAGE       ?= ansible-terraform
@@ -234,7 +234,7 @@ test-%: build-%
 	  ansible-playbook -i localhost, -c local smoke.yml
 ```
 
-- [ ] **Step 6: Run the test to verify it passes**
+- [x] **Step 6: Run the test to verify it passes**
 
 Run: `make test-alpine-stable`
 
@@ -253,7 +253,7 @@ localhost : ok=4  changed=3  unreachable=0  failed=0
 
 If `community.general.terraform` reports "Destination directory /tmp/tfsmoke does not exist", the `file:` task in Step 1 is missing or misordered.
 
-- [ ] **Step 7: Verify the labels landed**
+- [x] **Step 7: Verify the labels landed**
 
 Run:
 
@@ -263,7 +263,7 @@ podman inspect --format '{{index .Labels "org.opencontainers.image.licenses"}} |
 
 Expected: `GPL-3.0-or-later AND BUSL-1.1 | docker.io/pdutton/ansible:alpine-stable | <the current git SHA>`
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add .gitignore .dockerignore Makefile Containerfile.alpine-stable test/
@@ -290,13 +290,13 @@ offline."
 - Consumes: the `build-%` / `test-%` pattern rules and `LOCAL_IMAGE` from Task 1; `test/smoke.yml` unchanged — it is variant-agnostic.
 - Produces: all four variants buildable as `localhost/ansible-terraform:<variant>`.
 
-- [ ] **Step 1: Run the full test suite to verify three variants are missing**
+- [x] **Step 1: Run the full test suite to verify three variants are missing**
 
 Run: `make test`
 
 Expected: PASS, but only `alpine-stable` runs — `VARIANTS` still holds one entry. This is the baseline.
 
-- [ ] **Step 2: Write `Containerfile.ubuntu-stable`**
+- [x] **Step 2: Write `Containerfile.ubuntu-stable`**
 
 Differs from `alpine-stable` in the Ansible `FROM`, `base.name` and description. The Terraform `FROM` stays `:stable` — Terraform has no OS axis, so its `FROM` changes on the channel axis only.
 
@@ -319,7 +319,7 @@ WORKDIR /apps
 CMD ["terraform", "-help"]
 ```
 
-- [ ] **Step 3: Write `Containerfile.alpine-development`**
+- [x] **Step 3: Write `Containerfile.alpine-development`**
 
 ```dockerfile
 FROM docker.io/pdutton/terraform:development AS terraform
@@ -340,7 +340,7 @@ WORKDIR /apps
 CMD ["terraform", "-help"]
 ```
 
-- [ ] **Step 4: Write `Containerfile.ubuntu-development`**
+- [x] **Step 4: Write `Containerfile.ubuntu-development`**
 
 ```dockerfile
 FROM docker.io/pdutton/terraform:development AS terraform
@@ -361,7 +361,7 @@ WORKDIR /apps
 CMD ["terraform", "-help"]
 ```
 
-- [ ] **Step 5: Expand `VARIANTS` in the Makefile**
+- [x] **Step 5: Expand `VARIANTS` in the Makefile**
 
 Replace:
 
@@ -375,13 +375,13 @@ with:
 VARIANTS    := alpine-stable alpine-development ubuntu-stable ubuntu-development
 ```
 
-- [ ] **Step 6: Run the full test suite to verify all four pass**
+- [x] **Step 6: Run the full test suite to verify all four pass**
 
 Run: `make test`
 
 Expected: four builds, four playbook runs, each ending `failed=0` with `composition OK: ok-from-terraform`.
 
-- [ ] **Step 7: Verify each variant got the right Terraform channel**
+- [x] **Step 7: Verify each variant got the right Terraform channel**
 
 Nothing in the smoke test asserts this (by design — the guard lives in container-terraform), so check it by hand once, here:
 
@@ -395,7 +395,7 @@ done
 
 Expected: both `*-stable` rows show a plain Terraform version (no `-beta`/`-rc`) with Ansible 13.x; both `*-development` rows show a `-beta`/`-rc` version with Ansible 14.x. A `*-stable` row showing a beta means a Containerfile's Terraform `FROM` is miswired.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add Containerfile.alpine-development Containerfile.ubuntu-stable Containerfile.ubuntu-development Makefile
@@ -418,7 +418,7 @@ irrelevant to Terraform and container-terraform has no OS axis."
 - Consumes: `LOCAL_IMAGE`, `PODMAN`, `AWK`, and the `build-%` rule from Task 1.
 - Produces: a second tag per variant, `<os>-<ansible-version>-<terraform-version>`, e.g. `alpine-13.0.0-1.15.8`; and `org.opencontainers.image.version` set to `<ansible-version>-<terraform-version>`.
 
-- [ ] **Step 1: Write the failing test — assert the version tag exists**
+- [x] **Step 1: Write the failing test — assert the version tag exists**
 
 There is no test harness for the Makefile, so the check is a command. Run:
 
@@ -428,7 +428,7 @@ podman image exists localhost/ansible-terraform:alpine-13.0.0-1.15.8 && echo TAG
 
 Expected: `MISSING`. (If the Ansible or Terraform versions have moved since this plan was written, substitute the versions reported by Task 2 Step 7 — the point is that no `<os>-<av>-<tv>` tag exists yet.)
 
-- [ ] **Step 2: Add `version-tag-%` to the Makefile**
+- [x] **Step 2: Add `version-tag-%` to the Makefile**
 
 Insert after the `build-%` rule:
 
@@ -475,7 +475,7 @@ version-tag-%:
 	echo "Tagged $(LOCAL_IMAGE):$$os-$$av-$$tv"
 ```
 
-- [ ] **Step 3: Call it from `build-%`**
+- [x] **Step 3: Call it from `build-%`**
 
 Append this line to the end of the `build-%` recipe, after the `.`:
 
@@ -483,7 +483,7 @@ Append this line to the end of the `build-%` recipe, after the `.`:
 	@$(MAKE) --no-print-directory version-tag-$*
 ```
 
-- [ ] **Step 4: Run the build and verify the tag appears**
+- [x] **Step 4: Run the build and verify the tag appears**
 
 Run: `make build-alpine-stable`
 
@@ -496,7 +496,7 @@ podman inspect --format '{{index .Labels "org.opencontainers.image.version"}}' l
 
 Expected: `TAGGED`, then `13.0.0-1.15.8`.
 
-- [ ] **Step 5: Add the `clean` target**
+- [x] **Step 5: Add the `clean` target**
 
 Add `clean` to `.PHONY`, add a help line for it, and append:
 
@@ -518,7 +518,7 @@ The help line, placed after the `test` line:
 	@echo "  clean                 Remove all tagged images built by this repo"
 ```
 
-- [ ] **Step 6: Verify the full cycle**
+- [x] **Step 6: Verify the full cycle**
 
 Run:
 
@@ -530,7 +530,7 @@ podman images --format '{{.Repository}}:{{.Tag}}' | grep ansible-terraform | sor
 
 Expected: eight tags — four `<os>-<channel>` and four `<os>-<av>-<tv>`. Then `make clean` again, followed by the same `podman images` command, should print nothing.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add Makefile
@@ -555,7 +555,7 @@ from what is installed."
 - Consumes: the variant list, tag scheme and `make` targets from Tasks 1–3.
 - Produces: nothing other tasks depend on. This is the last task.
 
-- [ ] **Step 1: Gather the real numbers**
+- [x] **Step 1: Gather the real numbers**
 
 Do not type versions from memory. Run:
 
@@ -570,7 +570,7 @@ done
 
 Use exactly what this prints in the README table.
 
-- [ ] **Step 2: Write `README.md`**
+- [x] **Step 2: Write `README.md`**
 
 Structure it as both upstream repos do. It must contain:
 
@@ -595,7 +595,7 @@ Structure it as both upstream repos do. It must contain:
 
 - A **Planned** section listing what is deliberately absent: publishing to a registry, CI, aligning the tag scheme with the upstreams' (they have 15 and 7 tags respectively, including `latest`), multi-arch manifests, and digest-pinning the upstream bases.
 
-- [ ] **Step 3: Update `CLAUDE.md`**
+- [x] **Step 3: Update `CLAUDE.md`**
 
 Replace the `## Status` section — which says the repo is a stub with no Containerfile, build script or test suite — with a description of what now exists: four Containerfiles composing published upstream images, a Makefile, and a smoke test.
 
@@ -606,7 +606,7 @@ Replace the `## Maintaining this file` section with the real commands:
 - Add a warning that a plain rebuild will not pick up republished upstreams — `PODMAN_BUILD_FLAGS="--pull"` is required.
 - Add a note that version, channel and prerelease assertions belong in container-terraform, not here, and must not be added to `test/smoke.yml`.
 
-- [ ] **Step 4: Verify the documented commands actually work**
+- [x] **Step 4: Verify the documented commands actually work**
 
 Run every command the README's "Building locally" section names:
 
@@ -623,7 +623,7 @@ podman run --rm -v "$PWD":/apps -w /apps localhost/ansible-terraform:alpine-stab
 
 Expected: prints a Terraform version. (Run `make build` first if the preceding `make clean` removed the image.)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add README.md CLAUDE.md
