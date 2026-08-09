@@ -26,7 +26,8 @@
 - Both workflow `make` invocations pass `PODMAN_BUILD_FLAGS="--pull"`.
 - External tools stay overridable: `PODMAN ?= /usr/bin/podman`, `AWK ?= /usr/bin/awk`.
 - `clean` must never run a blanket `podman image prune`.
-- **Do not touch `Containerfile.*` or `test/smoke.yml`.** This work is Makefile, workflow, and docs only. In particular, do not add version, channel, or prerelease assertions to the smoke test — the spec records that as a deliberately accepted risk, not an oversight.
+- **No committed change to `Containerfile.*` or `test/smoke.yml`.** This work is Makefile, workflow, and docs only. In particular, do not add version, channel, or prerelease assertions to the smoke test — the spec records that as a deliberately accepted risk, not an oversight.
+- **One sanctioned temporary edit:** Task 2 Step 8 appends a deliberately failing task to `test/smoke.yml` to prove at runtime that a failing smoke test aborts before the push loop. It must be restored byte-for-byte in the same step and verified with `git diff`. This is the only permitted edit to that file, and it must never reach a commit.
 
 **Working directory:** `~/projects/container-ansible-terraform/feature/dockerhub-publish` (already exists, branch `feature/dockerhub-publish`). All commands below run there.
 
@@ -1143,16 +1144,18 @@ Expected: `make help` lists the push targets; the two version commands print an 
 The tag list in the README must match what a build actually produces:
 
 ```bash
-podman images --format '{{.Tag}}' \
-  | grep -vE '^<none>$' \
+podman images --format '{{.Repository}}:{{.Tag}}' \
+  | sed -n 's|^localhost/ansible-terraform:||p' \
   | sort -u > /tmp/at-actual.txt
 for t in alpine-stable alpine-development ubuntu-stable ubuntu-development alpine ubuntu latest; do
   grep -qx "$t" /tmp/at-actual.txt || echo "MISSING from build: $t"
 done
-grep -c . /tmp/at-actual.txt
+wc -l < /tmp/at-actual.txt
 ```
 
-Expected: no `MISSING` lines. (The count includes any non-`ansible-terraform` images present on the machine; it is informational.)
+Expected: no `MISSING` lines, then `11`.
+
+The repository prefix in the `sed` is load-bearing, not tidiness. A bare `{{.Tag}}` listing spans every image on the machine, and a developer who has also built the sibling repos will have `localhost/terraform:latest` and `localhost/ansible:alpine` sitting there — so the check would pass while `ansible-terraform` produced none of those tags.
 
 - [ ] **Step 14: Commit**
 
