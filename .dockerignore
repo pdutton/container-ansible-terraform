@@ -5,3 +5,5 @@ Makefile
 README.md
 LICENSE
 CLAUDE.md
+.github/
+DOCKERHUB-OVERVIEW.md
