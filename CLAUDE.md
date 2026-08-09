@@ -98,7 +98,7 @@ Tags are read out of the built image and never typed: `tag-%` runs
 `ansible-community --version` (the *bundle* version, not `ansible --version`,
 which reports core) and `terraform version`, joins them into one composite
 `<ansible>-<terraform>` version, and derives the whole tag set from it. See
-Publishing below.
+Publishing above.
 
 ## Do not add version or channel assertions to the smoke test
 

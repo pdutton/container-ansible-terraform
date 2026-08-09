@@ -1079,7 +1079,7 @@ Tags are read out of the built image and never typed: `tag-%` runs
 `ansible-community --version` (the *bundle* version, not `ansible --version`,
 which reports core) and `terraform version`, joins them into one composite
 `<ansible>-<terraform>` version, and derives the whole tag set from it. See
-Publishing below.
+Publishing above.
 ```
 
 Then confirm the old name survives nowhere:
