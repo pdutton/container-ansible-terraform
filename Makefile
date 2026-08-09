@@ -1,5 +1,5 @@
 IMAGE       ?= ansible-terraform
-VARIANTS    := alpine-stable
+VARIANTS    := alpine-stable alpine-development ubuntu-stable ubuntu-development
 
 # Every local image reference goes through this, never a bare $(IMAGE): an
 # unqualified name can resolve by an implicit registry tie-break, which is not
