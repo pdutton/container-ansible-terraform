@@ -1,69 +1,76 @@
-# Phase 1: Terraform Images on the container-ansible Base
+# Phase 1: Composing Ansible and Terraform Images
 
 **Date:** 2026-08-08
 **Status:** Approved
+**Revised:** 2026-08-08 — both upstreams now publish; this repo composes rather
+than installs. See "Revision history" at the end.
 
 ## Goal
 
-Build four container image variants locally with Podman, each layering Terraform
-onto the corresponding image from
-[container-ansible](https://github.com/pdutton/container-ansible), and verify
-each one by running Ansible against Terraform inside it. Nothing in this phase
-publishes images, builds multi-arch manifests, or runs in CI.
+Build four container image variants locally with Podman, each composing the
+Ansible image published by
+[container-ansible](https://github.com/pdutton/container-ansible) with the
+Terraform binary from the image published by
+[container-terraform](https://github.com/pdutton/container-terraform), and verify
+each one by having Ansible drive Terraform inside it.
 
-Base images are consumed from the local Podman store as `localhost/ansible:<variant>`.
-They are a prerequisite, not a dependency this repo builds.
+This repo installs nothing. It downloads no archives, verifies no signatures, and
+resolves no versions — all of that lives in the two upstream repos. It composes.
+
+Nothing in this phase publishes images, builds multi-arch manifests, or runs in
+CI.
+
+### Prerequisite: container-terraform must publish first
+
+**`docker.io/pdutton/terraform` currently has no tags.** Verified 2026-08-08 via
+the Docker Hub API: `pdutton/ansible` returns 15 tags, `pdutton/terraform`
+returns 0. container-terraform's publishing work exists as a designed and planned
+branch (`feature/dockerhub-publish`) that has not merged.
+
+Implementation of this spec is therefore **blocked** until container-terraform
+merges that branch and pushes at least `stable` and `development`. This was a
+deliberate choice: referencing the published name now avoids a follow-up commit
+flipping every Containerfile away from a `localhost/` reference, at the cost of
+not being able to build until the upstream lands.
 
 ## Variant Matrix
 
-| Variant | Base image | Terraform line | Resolves to (2026-08-08) |
-|---|---|---|---|
-| `alpine-stable` | `localhost/ansible:alpine-stable` | 1.15 | 1.15.8 |
-| `alpine-development` | `localhost/ansible:alpine-development` | 1.16 beta/RC | 1.16.0-beta2 |
-| `ubuntu-stable` | `localhost/ansible:ubuntu-stable` | 1.15 | 1.15.8 |
-| `ubuntu-development` | `localhost/ansible:ubuntu-development` | 1.16 beta/RC | 1.16.0-beta2 |
+| Variant | Ansible base | Terraform source |
+|---|---|---|
+| `alpine-stable` | `docker.io/pdutton/ansible:alpine-stable` | `docker.io/pdutton/terraform:stable` |
+| `alpine-development` | `docker.io/pdutton/ansible:alpine-development` | `docker.io/pdutton/terraform:development` |
+| `ubuntu-stable` | `docker.io/pdutton/ansible:ubuntu-stable` | `docker.io/pdutton/terraform:stable` |
+| `ubuntu-development` | `docker.io/pdutton/ansible:ubuntu-development` | `docker.io/pdutton/terraform:development` |
 
-### Terraform is not packaged by either distro
+Both bases pull from Docker Hub, so there is no requirement to have built either
+upstream repo locally.
 
-Verified on 2026-08-08 against the actual base images:
+### Why the composition is asymmetric
 
-- Alpine 3.23 has no `terraform` package. It was removed from aports after the
-  BUSL relicense.
-- Ubuntu 26.04 carries only peripheral tooling — `terraform-switcher`,
-  `terraform-config-inspect`, `tfk8s`, and some Go libraries — not Terraform.
+Ansible is the base and Terraform is copied in. That is not arbitrary — it
+follows from what each tool actually is, measured on the real images on
+2026-08-08:
 
-So the mechanism container-ansible uses for its STABLE channel, "install from the
-distro package manager", has no analogue here. Both channels install the same
-way: a verified zip from `releases.hashicorp.com`.
+| | Relocatable? | Evidence |
+|---|---|---|
+| Terraform | **yes, completely** | one statically linked ELF, `ldd` → "not a dynamic executable", nothing outside `/usr/local/bin/terraform` |
+| Ansible | **no** | `stable` variants have no `/opt/ansible` at all — Ansible is a distro package in system paths. `development` variants symlink `/opt/ansible/bin/python3` → `/usr/bin/python3` and record an exact interpreter version in `pyvenv.cfg`; `ubuntu-development` is built `--system-site-packages`, with winrm/gssapi/selinux resolving to `/usr/lib/python3/dist-packages` |
 
-### What the channel names mean here
+So copying Terraform onto an Ansible base is a one-file operation that cannot go
+subtly wrong. The reverse — copying Ansible onto a Terraform base — would mean
+re-declaring Python, ssh, sshpass and the Kerberos stack here, with a silent
+failure mode: when container-ansible bumps Alpine and Python goes 3.12 → 3.13,
+the copied venv's symlink still resolves while its `pyvenv.cfg` no longer
+matches.
 
-In container-ansible, STABLE and DEVELOPMENT differ in *install method* — distro
-package versus pip-into-a-venv — and the pinned OS release acts as the version
-selector.
+### Channel mapping
 
-Here both channels install identically and the only thing that varies is the
-declared version line. The channel word therefore carries its meaning from two
-places at once: the Ansible channel inherited from the base image, and the
-Terraform line declared in the Containerfile. This asymmetry with upstream is
-intentional and should not be "fixed" by inventing a second install method.
-
-### Channel resolution
-
-Each Containerfile declares its line as `ARG TF_LINE`, and stage 1 queries
-`https://releases.hashicorp.com/terraform/index.json` for the newest match:
-
-- STABLE: newest release on the line with no prerelease suffix.
-- DEVELOPMENT: newest `-beta*` or `-rc*` on the line. Alphas are excluded — they
-  have no quality bar and churn close to daily, so an image built from one is a
-  different snapshot every rebuild.
-
-If no match exists, **the build fails**. It does not fall back to stable, and it
-does not roll onto the next line. When 1.16.0 goes final its betas stop being the
-newest thing on the line, the DEVELOPMENT build fails, and the fix is to bump
-STABLE to 1.16 and DEVELOPMENT to 1.17. This is container-ansible's rule — a
-channel fails loudly rather than silently redefining itself — transplanted to a
-source that has no distro release to pin it.
+The `stable`/`development` word means the same thing on both sides, so the
+channels line up: both `*-stable` variants take `terraform:stable`, both
+`*-development` variants take `terraform:development`. The Ansible channel
+additionally selects the OS variant, which Terraform has no equivalent of — a
+static binary makes the base OS irrelevant to Terraform, so container-terraform
+has only two channels and no OS axis.
 
 ## Repository Layout
 
@@ -81,171 +88,129 @@ README.md
 LICENSE
 ```
 
-Four explicit Containerfiles, matching upstream. Nothing is `COPY`d from the
-build context, so `.dockerignore` keeps the context near-empty exactly as
-upstream's does.
-
-Image name: `IMAGE ?= ansible-terraform`. Base repository: `BASE ?= localhost/ansible`.
-Terraform is installed to `/usr/local/bin/terraform`, which is on `PATH` in all
-four variants — on the DEVELOPMENT variants `/opt/ansible/bin` is *prepended* to
-`PATH`, not substituted for it.
+Four explicit Containerfiles, matching both upstreams. Nothing is `COPY`d from
+the build context, so `.dockerignore` keeps the context near-empty.
 
 ## Containerfiles
 
-Two stages each. Stage 1 is a throwaway Alpine downloader; stage 2 is the shipped
-image. Only the binary crosses between them, so `curl`, `jq`, `gnupg` and `unzip`
-never appear in the result.
+Each is a single `COPY` onto a working base. `Containerfile.alpine-stable` in
+full:
 
 ```dockerfile
-FROM docker.io/library/alpine:3.23 AS terraform
+FROM docker.io/pdutton/terraform:stable AS terraform
 
-ARG TF_LINE=1.15
-ARG HASHICORP_KEY=C874011F0AB405110D02105534365D9472D7468F
-
-RUN apk add --no-cache curl jq gnupg unzip coreutils
-
-RUN set -eu; \
-    version="$(curl -fsSL https://releases.hashicorp.com/terraform/index.json \
-      | jq -r --arg l "$TF_LINE" '.versions|keys[]|select(startswith($l+"."))' \
-      | grep -Ev -- '-(alpha|beta|rc)' | sort -V | tail -1)"; \
-    [ -n "$version" ] || { echo "ERROR: no release on line $TF_LINE" >&2; exit 1; }; \
-    case "$(uname -m)" in x86_64) arch=amd64;; aarch64) arch=arm64;; \
-      *) echo "ERROR: unsupported arch $(uname -m)" >&2; exit 1;; esac; \
-    base="https://releases.hashicorp.com/terraform/$version"; \
-    curl -fsSLO "$base/terraform_${version}_linux_${arch}.zip"; \
-    curl -fsSLO "$base/terraform_${version}_SHA256SUMS"; \
-    curl -fsSLO "$base/terraform_${version}_SHA256SUMS.sig"; \
-    curl -fsSL https://www.hashicorp.com/.well-known/pgp-key.txt | gpg --import; \
-    gpg --with-colons --fingerprint | grep -q "^fpr:::::::::$HASHICORP_KEY:"; \
-    gpg --verify "terraform_${version}_SHA256SUMS.sig" "terraform_${version}_SHA256SUMS"; \
-    sha256sum --ignore-missing -c "terraform_${version}_SHA256SUMS"; \
-    unzip "terraform_${version}_linux_${arch}.zip" -d /out
-
-FROM localhost/ansible:alpine-stable
+FROM docker.io/pdutton/ansible:alpine-stable
 
 LABEL org.opencontainers.image.title="ansible-terraform" \
-      org.opencontainers.image.description="Terraform 1.15 (stable) on Ansible 13 (stable), Alpine 3.23" \
+      org.opencontainers.image.description="Terraform (stable) on Ansible 13 (stable), Alpine 3.23" \
       org.opencontainers.image.licenses="GPL-3.0-or-later AND BUSL-1.1" \
       org.opencontainers.image.source="https://github.com/pdutton/container-ansible-terraform" \
       org.opencontainers.image.url="https://github.com/pdutton/container-ansible-terraform" \
       org.opencontainers.image.vendor="pdutton" \
-      org.opencontainers.image.base.name="localhost/ansible:alpine-stable"
+      org.opencontainers.image.base.name="docker.io/pdutton/ansible:alpine-stable"
 
-COPY --from=terraform /out/terraform /usr/local/bin/terraform
+COPY --from=terraform /usr/local/bin/terraform /usr/local/bin/terraform
 
 WORKDIR /apps
 CMD ["terraform", "-help"]
 ```
 
-The file above is `Containerfile.alpine-stable`. The other three differ from it
-only as follows:
+The other three differ from it only as follows:
 
 | File | Differences |
 |---|---|
-| `Containerfile.ubuntu-stable` | stage 2 `FROM`, `base.name`, description |
-| `Containerfile.alpine-development` | `ARG TF_LINE=1.16`; version filter keeps `-(beta\|rc)` matches instead of dropping all prereleases; stage 2 `FROM`, `base.name`, description |
+| `Containerfile.ubuntu-stable` | Ansible `FROM`, `base.name`, description |
+| `Containerfile.alpine-development` | Terraform `FROM` → `:development`; Ansible `FROM`, `base.name`, description |
 | `Containerfile.ubuntu-development` | same as `alpine-development` |
 
-Stage 1 stays on Alpine in all four, because it is thrown away and its only job
-is to produce a verified binary.
+Note that the two `*-stable` variants share `terraform:stable` and the two
+`*-development` variants share `terraform:development` — the Terraform `FROM`
+changes on the channel axis only, since Terraform has no OS axis.
 
-Version ordering relies on GNU `sort -V` from `coreutils`, which Alpine installs
-at `/usr/bin/sort` — ahead of busybox's `/bin/sort` on the default `PATH`. It
-orders `1.16.0-beta2` before `1.16.0-rc1`, and both before `1.16.0`, which is the
-ordering both filters need.
+Notes on the shape:
 
-### The Terraform binary is portable across both bases
+- **The named `terraform` stage is for readability**, not necessity —
+  `COPY --from=docker.io/pdutton/terraform:stable ...` works directly. Naming it
+  puts both upstream dependencies at the top of the file where they can be read
+  at a glance.
+- **`base.name` names the Ansible image only.** The Terraform image is a copy
+  source, not a base; none of its filesystem layers are inherited.
+- **No build args**, preserving the convention both upstreams follow. The `FROM`
+  lines are the selectors and are edited deliberately.
+- **No `ENTRYPOINT`**, as upstream. `CMD ["terraform", "-help"]` — Terraform is
+  what this layer contributes, so it takes the default.
+- `/usr/local/bin` is on `PATH` in all four variants. On the `development`
+  variants `/opt/ansible/bin` is *prepended* to `PATH`, not substituted for it.
 
-HashiCorp's official `linux_amd64` and `linux_arm64` Terraform builds are
-statically linked. The same downloaded artifact runs on the musl (Alpine) and
-glibc (Ubuntu) bases alike, which is why one Alpine downloader stage can serve
-all four variants.
+### What this repo deliberately does not do
 
-### Signature verification
+Earlier revisions of this spec had each Containerfile download Terraform from
+`releases.hashicorp.com` in a throwaway stage: resolving a version within a
+declared line, importing HashiCorp's GPG key, asserting a pinned fingerprint
+against the `VALIDSIG` status line, and verifying SHA256SUMS.
 
-The fingerprint pin is the load-bearing part. Fetching HashiCorp's key over HTTPS
-and then verifying a signature with the key just fetched proves only that the two
-came from the same place. Pinning `C874011F0AB405110D02105534365D9472D7468F` in
-the repo is what makes it a real check.
+All of that now lives in container-terraform and must not be duplicated here.
+Two copies of a supply-chain check are worse than one: they drift, and the weaker
+copy sets the real security level. If the download mechanism needs to change, it
+changes there.
 
-Verified on 2026-08-08: `https://www.hashicorp.com/.well-known/pgp-key.txt` serves
-`C874 011F 0AB4 0511 0D02 1055 3436 5D94 72D7 468F`, "HashiCorp Security
-(hashicorp.com/security)", RSA 4096, expiring 2030-03-01. When that key expires or
-rotates, the pin must be updated deliberately — the build failing is the intended
-behavior, not a bug to route around.
-
-`coreutils` is installed in the downloader because busybox's `sha256sum` does not
-support `--ignore-missing`, which is needed since `SHA256SUMS` covers every
-platform's artifact and only one was downloaded.
-
-### Architecture
-
-`arch` is derived from `uname -m` rather than hardcoded to `amd64`. Multi-arch
-manifests remain out of scope; this is only about the build working on the host
-it runs on. It costs three lines and converts a baffling runtime
-`exec format error` on an arm64 host into a build that simply works. An
-unrecognized machine type fails the build explicitly.
-
-### CMD
-
-`CMD ["terraform", "-help"]`. Upstream uses `ansible --help`; Terraform is what
-this layer contributes, so it takes the default. As upstream, there is **no
-`ENTRYPOINT`** — documented usage passes the binary explicitly, so the image
-stays a plain command host.
+The licensing consequence stays here, though, because it travels with the binary
+— see Licensing below.
 
 ## Makefile
 
-Mirrors upstream's shape: `build-<variant>`, `test-<variant>`, `build`, `test`,
-`version-tag-<variant>`, `clean`, and `help` as the default goal. Overridable
-external tools follow the existing `AWK ?=` / `PODMAN ?=` pattern.
+Mirrors the shape both upstreams share: `build-<variant>`, `test-<variant>`,
+`build`, `test`, `version-tag-<variant>`, `clean`, and `help` as the default
+goal. External tools are overridable vars (`PODMAN ?=`, `AWK ?=`).
 
 ```make
-IMAGE    ?= ansible-terraform
-BASE     ?= localhost/ansible
-VARIANTS := alpine-stable alpine-development ubuntu-stable ubuntu-development
-
-tf-line-stable      := 1.15
-tf-line-development := 1.16
-
-prerelease-stable      := false
-prerelease-development := true
+IMAGE       ?= ansible-terraform
+LOCAL_IMAGE  = localhost/$(IMAGE)
+VARIANTS    := alpine-stable alpine-development ubuntu-stable ubuntu-development
 ```
 
-### Declared twice, on purpose
+`LOCAL_IMAGE` is adopted from container-ansible, which introduced it so that no
+image reference in the file is unqualified — an unqualified name can resolve by
+an implicit registry tie-break, which is not something the highest-stakes lines
+in a build should depend on.
 
-`tf-line-*` in the Makefile feeds the smoke test's assertion only. The actual
-selector is the `ARG TF_LINE` in each Containerfile. This mirrors upstream
-exactly, where the real selector is the `FROM alpine:3.23` line and
-`major-stable := 13` exists solely so the smoke test can check it. One side
-declares, the other independently verifies; collapsing them into a single source
-would remove the check.
+### No preflight check
 
-### Preflight
+Earlier revisions specified a preflight verifying the base images existed
+locally, since `localhost/ansible` cannot be pulled. Both bases now come from
+Docker Hub, so Podman fetches what is missing and reports a normal registry error
+if a tag genuinely does not exist. The check is dropped rather than reimplemented.
 
-Before building a variant, confirm `$(BASE):<variant>` is present in the local
-image store. If it is absent, fail with a message naming container-ansible as the
-prerequisite rather than letting Podman attempt a registry pull of
-`localhost/ansible` and emit an opaque error.
+### Rebuilds and staleness
 
-### Build and version tagging
+`podman build` will reuse cached layers and *not* notice that
+`pdutton/ansible:alpine-stable` or `pdutton/terraform:stable` has been
+republished, because neither `FROM` line's text changed. To pick up republished
+upstreams:
 
-`build-%` runs `podman build` with `--label org.opencontainers.image.created`
-and `.revision` supplied from the Makefile, keeping the Containerfiles free of
-build args — as upstream does.
+```
+make build PODMAN_BUILD_FLAGS="--pull"
+```
 
-`version-tag-%` then reads **both** versions out of the freshly built image:
+`PODMAN_BUILD_FLAGS` is adopted from container-terraform, which added it for the
+same class of problem. This matters more here than in either upstream: this
+repo's images are entirely composed of other people's rebuilt content, so a
+plain `make build` can produce an image identical to yesterday's while both
+inputs have moved.
+
+### Version tagging
+
+`version-tag-%` reads **both** versions out of the freshly built image and
+applies them in the one-line `FROM`+`LABEL` pass both upstreams use:
 
 - `ansible-community --version` → the Ansible bundle version (e.g. `13.0.0`).
-  Note this is the bundle version, not `ansible --version`, which reports core.
-- `terraform version` → the Terraform version, with the leading `v` stripped
-  (e.g. `1.15.8`).
+  This is the bundle version, not `ansible --version`, which reports core.
+- `terraform version` → first line, last field, leading `v` stripped (e.g.
+  `1.15.8`).
 
 Both are applied as the tag suffix `<os>-<ansible>-<terraform>` and as
-`org.opencontainers.image.version`, in the same one-line `FROM`+`LABEL` pass
-upstream uses. Neither version is ever typed into the repo, so tags cannot drift
-from what is installed.
-
-Tags existing after a full build:
+`org.opencontainers.image.version`. Neither is ever typed into the repo, so tags
+cannot drift from what is installed.
 
 | Channel tag | Version tag |
 |---|---|
@@ -255,24 +220,27 @@ Tags existing after a full build:
 | `ubuntu-development` | `ubuntu-14.2.0-1.16.0-beta2` |
 
 Both versions appear because either can move independently — a rebuild picking up
-a newer Ansible base with the same Terraform would otherwise silently reuse a
-tag. The prerelease suffix makes the DEVELOPMENT tags visually busy; that is
-accepted in exchange for every distinct image having a distinct tag.
+a newer Ansible with the same Terraform would otherwise silently reuse a tag.
+
+**Known divergence:** container-ansible has since grown to a 15-tag scheme
+(`latest`, `<os>`, `<os>-<major>`, `<os>-<version>`, `<os>-<channel>`) and
+container-terraform to a 4-tag one including `latest`. This repo's two-tags-per-variant
+scheme no longer matches either. Aligning it is deferred — it belongs with the
+publishing phase, since a `latest` tag has little meaning for images that are
+never pushed.
 
 ### Clean
 
-As upstream: remove the tags this repo applies, and do not run a blanket
-`podman image prune`, which would delete untagged images this repo never built.
-The orphaned `<none>` layers left by each `version-tag-%` pass accumulate and are
-documented in the README as something to prune manually.
+As both upstreams: remove only the tags this repo applies, and never run a
+blanket `podman image prune`, which would delete images this repo never built.
 
 ## Testing
 
-`community.general.terraform` is present in the base images (community.general
-12.0.1, verified 2026-08-08 with no deprecation notice). `cloud.terraform` is not
-in the bundle. The smoke test therefore drives Terraform through a real Ansible
-module rather than shelling out — which is precisely the composition these images
-exist to provide.
+`community.general.terraform` is present in the Ansible base images
+(community.general 12.0.1, verified 2026-08-08, no deprecation notice;
+`cloud.terraform` is not in the bundle). The smoke test drives Terraform through
+a real Ansible module rather than shelling out, because that composition is the
+entire reason these images exist.
 
 ### `test/terraform/main.tf`
 
@@ -282,7 +250,7 @@ variable "greeting" {
   default = "ok"
 }
 
-resource "terraform_data" "smoke" {
+resource "terraform_data" "smoke" {   # builtin since TF 1.4 — no provider plugin
   input = var.greeting
 }
 
@@ -292,89 +260,85 @@ output "message" {
 ```
 
 No providers and no backend, so `init` needs no registry access and the test runs
-fully offline. `terraform_data` is a builtin managed resource (Terraform 1.4+),
-which makes this more than a syntax check: it exercises the real
-init → plan → apply → state path.
+fully offline. `terraform_data` is a builtin managed resource, which makes this
+more than a syntax check: it exercises the real init → plan → apply → state path.
 
 ### `test/smoke.yml`
 
-Run as upstream runs its own:
+Run as both upstreams run theirs:
 
 ```
-podman run --rm -v ./test:/apps:ro,z $(IMAGE):$* \
-  ansible-playbook -i localhost, -c local smoke.yml \
-  -e expect_tf_line=$(tf-line-<channel>) \
-  -e expect_prerelease=$(prerelease-<channel>)
+podman run --rm -v ./test:/apps:ro,z $(LOCAL_IMAGE):$* \
+  ansible-playbook -i localhost, -c local smoke.yml
 ```
 
-Assertions, in order:
+The playbook:
 
-1. `expect_tf_line` was supplied — guards against a bare invocation quietly
-   asserting nothing.
-2. `terraform version -json` reports a version on the declared line. This is the
-   channel-drift guard, the counterpart to upstream's `expect_major` check.
-3. Prerelease-ness matches the channel: DEVELOPMENT must carry a `-beta`/`-rc`
-   suffix, STABLE must carry none. Catches a resolver bug that hands STABLE a
-   prerelease or DEVELOPMENT a final release.
-4. Ansible copies `main.tf` into `/tmp/tfsmoke`. Required, not incidental:
-   `test/` is mounted read-only and Terraform must write `.terraform/` and state.
-5. `community.general.terraform` runs it with `project_path: /tmp/tfsmoke`,
+1. Copies `main.tf` into `/tmp/tfsmoke`. Required, not incidental: `test/` is
+   mounted read-only and Terraform must write `.terraform/` and state.
+2. Runs it with `community.general.terraform`, `project_path: /tmp/tfsmoke`,
    `state: present`, `force_init: true`.
-6. The registered output `message` equals `ok-from-terraform`.
+3. Asserts the registered output `message` equals `ok-from-terraform`.
 
-Steps 4–6 are the substance. A Terraform binary that is present but broken —
-wrong architecture, truncated download, missing execute bit — fails there even if
-it somehow satisfied step 2.
+That is the whole test. A Terraform binary that is present but broken — wrong
+architecture, truncated, missing execute bit — fails at step 2.
 
-### Not retested here
+### No version or channel assertions
 
-Ansible's own capabilities — `json_query`, `password_hash`, and the
-WinRM/Kerberos/SELinux stack — are container-ansible's contract and are covered
-by its suite. Duplicating those assertions here would drift out of sync with the
-upstream definitions they mirror.
+Earlier revisions asserted the Terraform minor line and that `development`
+carried a `-beta`/`-rc` while `stable` did not. Both assertions are dropped.
+
+container-terraform declares those lines and asserts them in its own smoke test,
+against its own images, before publishing. Re-asserting here would place the
+guard somewhere other than where the declaration lives: this repo would need a
+matching bump every time an upstream channel moved, and would fail its build over
+a correct upstream change. Ansible's own capabilities — `json_query`,
+`password_hash`, the WinRM/Kerberos/SELinux stack — are likewise
+container-ansible's contract, covered by its suite, and are not retested here.
+
+What remains untested as a result: nothing verifies that `alpine-stable` received
+`terraform:stable` rather than `terraform:development`. A miswired `COPY --from`
+would produce a working image on the wrong channel, and only the version tag
+would reveal it. This is an accepted consequence of keeping each guard in the repo
+that owns the declaration.
 
 ## Licensing
 
-Terraform 1.6.0 and later are licensed under BUSL-1.1, not an open-source
-license. Verified against the 1.15.8 tag on 2026-08-08:
-
-- Licensor: International Business Machines Corporation (IBM).
-- Additional Use Grant: production use is permitted, *provided* the use does not
-  include offering Terraform to third parties on a hosted or embedded basis in
-  order to compete with IBM's paid versions of it.
-- Change Date: four years from publication. Change License: MPL-2.0.
+Terraform 1.6.0 and later are BUSL-1.1, not open source. Verified against the
+1.15.8 tag on 2026-08-08: licensor IBM; the Additional Use Grant permits
+production use *provided* it does not include offering Terraform to third parties
+on a hosted or embedded basis in order to compete with IBM's paid versions;
+Change Date is four years from publication, Change License MPL-2.0.
 
 Redistribution inside a container image is permitted, so building and using these
-images is fine. But upstream's `org.opencontainers.image.licenses=GPL-3.0-or-later`
-would be inaccurate on an image containing a BUSL binary — a scanner reading that
-label alone would conclude the image is freely usable.
+images is fine. But container-ansible's `GPL-3.0-or-later` would be inaccurate
+here — a scanner reading that label alone would conclude the image is freely
+usable.
 
-The images therefore carry `GPL-3.0-or-later AND BUSL-1.1`, a valid SPDX
-expression covering this repo's own contribution and the inherited Ansible stack
-(GPL) alongside the Terraform binary (BUSL).
+These images therefore carry `GPL-3.0-or-later AND BUSL-1.1`, a valid SPDX
+expression covering the inherited Ansible stack and this repo's own contribution
+(GPL) alongside the Terraform binary (BUSL). container-terraform labels its own
+images `BUSL-1.1` alone, correctly — it carries no GPL Ansible stack.
 
 `LICENSE` stays as the bare GPLv3 text for this repo's own code. As upstream, the
 README makes the "or later" election explicit, since the license text does not
-make it itself. A README section states the BUSL terms above in plain language;
-that section is what makes the label honest rather than merely present.
+make it itself, and a README section states the BUSL terms in plain language.
+That section is what makes the label honest rather than merely present.
 
 ## README
 
-Following upstream's structure:
+Following the structure both upstreams share:
 
 - Usage aliases for running `terraform` and `ansible-playbook` out of the image,
   with the same single-quoted `"$PWD"` caveat and the same SELinux warning about
   mounting `~/.ssh`.
-- The variant table, including which Ansible bundle and Terraform version each
-  currently resolves to.
-- Capability differences inherited from the base: the Alpine variants have no
-  WinRM/Kerberos/SELinux support, the Ubuntu variants do.
-- Building locally, stating up front that container-ansible's images must be
-  built first, and that both channels reach the network at build time to resolve
-  and download Terraform.
-- The tag scheme, and the note that DEVELOPMENT version tags are a snapshot
-  rather than a promise — the resolver picks whatever the newest beta/RC is at
-  build time.
+- The variant table, naming both upstream images each variant composes.
+- Capability differences inherited from the Ansible base: the Alpine variants have
+  no WinRM/Kerberos/SELinux support, the Ubuntu variants do.
+- Building locally — noting that both bases pull from Docker Hub, that no local
+  build of either upstream is needed, and that `PODMAN_BUILD_FLAGS="--pull"` is
+  required to pick up republished upstreams.
+- The tag scheme, and that these images are not published anywhere yet.
 - The licensing section described above.
 - A `## Planned` section for the deferred items below.
 
@@ -383,16 +347,38 @@ Following upstream's structure:
 Make halts on any non-zero exit, so nothing broken reaches tagging and a failed
 assertion cannot yield a green `make test`. Specifically:
 
-- Missing base image → preflight fails naming container-ansible.
-- Empty version resolution → build fails rather than defaulting to anything.
-- GPG fingerprint mismatch, bad signature, or bad checksum → build fails.
-- Unrecognized `uname -m` → build fails.
+- A missing or unpublished upstream tag → `podman build` fails on the `FROM`
+  with a registry error naming the tag.
 - Either version unreadable in `version-tag-%` → fails loudly rather than
   emitting an unversioned tag.
 
 ## Out of Scope
 
-Deferred to later phases: pushing to a registry, multi-arch manifests, CI, a
-`latest` tag, provider mirroring or caching inside the image, OpenTofu as an
-alternative or additional binary, and Terraform lines other than the two current
-channels.
+Deferred: pushing these images to a registry, CI, aligning the tag scheme with
+the upstreams' (including `latest`), multi-arch manifests, digest-pinning the
+upstream bases, provider mirroring or caching inside the image, and OpenTofu.
+
+Both upstreams now publish to Docker Hub and container-ansible runs CI, so
+publishing is the natural next phase for this repo — and the tag-scheme alignment
+noted above belongs with it.
+
+## Revision history
+
+**2026-08-08, original.** Four variants built `FROM localhost/ansible:<variant>`,
+each downloading and verifying Terraform from `releases.hashicorp.com` in a
+throwaway stage: version resolution within a declared line, GPG signature check
+against a pinned fingerprint, SHA256 verification. Smoke test asserted the
+Terraform line and prerelease-ness per channel.
+
+**2026-08-08, revised.** container-ansible began publishing to
+`docker.io/pdutton/ansible`, and the Terraform install was split out into
+container-terraform, which builds locally today and publishes to
+`docker.io/pdutton/terraform` shortly. Consequently:
+
+- Both bases now pull from Docker Hub; the local-image preflight is dropped.
+- The download/verify stage is deleted entirely. Terraform arrives as a
+  `COPY --from` of one static file.
+- The Terraform line declaration, `TF_LINE`, the pinned GPG fingerprint, and the
+  channel assertions all move to container-terraform.
+- `PODMAN_BUILD_FLAGS` is adopted, because composed images go stale invisibly.
+- Implementation is blocked until `pdutton/terraform` publishes.
