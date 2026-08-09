@@ -1,0 +1,38 @@
+---
+- name: Smoke-test the ansible-terraform image
+  hosts: localhost
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+
+  tasks:
+    # /apps is mounted read-only and Terraform must write .terraform/ and state,
+    # so the config is copied somewhere writable first. `copy` does not create a
+    # missing destination directory, hence this task.
+    - name: Create a writable working directory
+      ansible.builtin.file:
+        path: /tmp/tfsmoke
+        state: directory
+        mode: "0755"
+
+    - name: Copy the Terraform config somewhere writable
+      ansible.builtin.copy:
+        src: /apps/terraform/main.tf
+        dest: /tmp/tfsmoke/main.tf
+        mode: "0644"
+
+    # Driving Terraform through a real Ansible module, not a shell-out, is the
+    # point: the composition is what this image exists to provide.
+    - name: Run it with the Terraform module
+      community.general.terraform:
+        project_path: /tmp/tfsmoke
+        state: present
+        force_init: true
+      register: tf
+
+    - name: Assert the output round-tripped
+      ansible.builtin.assert:
+        that:
+          - tf.outputs.message.value == "ok-from-terraform"
+        success_msg: "composition OK: {{ tf.outputs.message.value }}"
+        fail_msg: "expected ok-from-terraform, got {{ tf.outputs | default('no outputs') }}"
