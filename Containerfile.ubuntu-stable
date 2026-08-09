@@ -1,0 +1,19 @@
+# The terraform stage is a copy source only -- none of its layers are inherited.
+# Naming it puts both upstream dependencies at the top of the file where they can
+# be read at a glance.
+FROM docker.io/pdutton/terraform:stable AS terraform
+
+FROM docker.io/pdutton/ansible:ubuntu-stable
+
+LABEL org.opencontainers.image.title="ansible-terraform" \
+      org.opencontainers.image.description="Terraform (stable) with Ansible 13 (stable) on Ubuntu 26.04" \
+      org.opencontainers.image.licenses="GPL-3.0-or-later AND BUSL-1.1" \
+      org.opencontainers.image.source="https://github.com/pdutton/container-ansible-terraform" \
+      org.opencontainers.image.url="https://github.com/pdutton/container-ansible-terraform" \
+      org.opencontainers.image.vendor="pdutton" \
+      org.opencontainers.image.base.name="docker.io/pdutton/ansible:ubuntu-stable"
+
+COPY --from=terraform /usr/local/bin/terraform /usr/local/bin/terraform
+
+WORKDIR /apps
+CMD ["terraform", "-help"]
