@@ -1,5 +1,7 @@
 # container-ansible-terraform
 
+[![build](https://github.com/pdutton/container-ansible-terraform/actions/workflows/build.yml/badge.svg)](https://github.com/pdutton/container-ansible-terraform/actions/workflows/build.yml)
+
 Container images with both Ansible and Terraform.
 
 These images compose two upstream repos: the Ansible images from
@@ -12,12 +14,12 @@ resolved. All of that lives upstream. This repo composes.
 ## Ansible and Terraform Without Installing
 
 ```
-alias terraform='podman run -ti --rm -v "$PWD":/apps -w /apps localhost/ansible-terraform:alpine-stable terraform'
+alias terraform='podman run -ti --rm -v "$PWD":/apps -w /apps docker.io/pdutton/ansible-terraform:alpine-stable terraform'
 terraform <follow command>
 ```
 
 ```
-alias ansible-playbook='podman run -ti --rm -v ~/.ssh:/root/.ssh:ro -v "$PWD":/apps -w /apps localhost/ansible-terraform:alpine-stable ansible-playbook'
+alias ansible-playbook='podman run -ti --rm -v ~/.ssh:/root/.ssh:ro -v "$PWD":/apps -w /apps docker.io/pdutton/ansible-terraform:alpine-stable ansible-playbook'
 ansible-playbook -i inventory <follow command>
 ```
 
@@ -53,6 +55,23 @@ OS is irrelevant to it and container-terraform has no OS axis at all.
 Locally built images are referenced as `localhost/ansible-terraform:<tag>`, e.g.
 `localhost/ansible-terraform:ubuntu-stable`.
 
+### Published Images
+
+Images are published to
+[`pdutton/ansible-terraform`](https://hub.docker.com/r/pdutton/ansible-terraform) on Docker Hub:
+
+```bash
+podman pull docker.io/pdutton/ansible-terraform:alpine-stable
+```
+
+Or, with Docker:
+
+```bash
+docker pull pdutton/ansible-terraform:latest
+```
+
+A local build carries the identical tag set.
+
 ## Capability Differences
 
 Inherited whole from the Ansible base. Alpine has no packages for `winrm`, `pyspnego`, `requests-ntlm`,
@@ -75,12 +94,20 @@ build container-ansible or container-terraform first.
 ```bash
 make build                 # build all four variants
 make test                  # smoke-test all four variants
+make push                  # build, test, and publish all four to Docker Hub
 make build-alpine-stable   # build just one variant
 make clean                 # remove all tagged images this repo builds
 ```
 
 Run `make help` (or just `make`) to list every target, including the per-variant `build-<variant>` and
 `test-<variant>` names (`test-<variant>` builds first).
+
+`make build` applies the complete tag set locally, so a local build and a published one leave
+identical tag state — which is what makes a CI publish reproducible on your own machine.
+`push-<variant>` depends on `test-<variant>`, so a failing smoke test blocks the publish.
+Publishing requires `podman login docker.io` first; override the destination with
+`make push REGISTRY=ghcr.io/pdutton`. Publishing normally happens in CI on a merge to `master`,
+not from a developer's machine.
 
 ### Rebuilds do not pick up republished upstreams
 
@@ -102,27 +129,107 @@ because it would also delete untagged images this repo never built.
 
 ## Tags
 
-Each variant produces **two tags** pointing at the same image:
+Eleven tags exist after a full build. Version components below are examples current as of
+2026-08-09 and drift.
 
-- `<os>-<channel>` — e.g. `alpine-stable`, `ubuntu-development`. Stable across rebuilds; use this in scripts and
-  aliases.
-- `<os>-<ansible>-<terraform>` — e.g. `alpine-13.0.0-1.15.8`, `ubuntu-14.2.0-1.16.0-beta2`. Derived at build time
-  by reading `ansible-community --version` and `terraform version` out of the freshly built image, so they always
-  reflect what is actually installed.
+| Tag | Resolves to |
+|---|---|
+| `latest` | `ubuntu-stable` — the variant with no capability gaps, on the channel whose Terraform is a final release |
+| `ubuntu`, `alpine` | that OS's `stable` variant |
+| `<os>-stable`, `<os>-development` | newest build of that channel on that OS. Stable across rebuilds; use this in scripts and aliases |
+| `<os>-<ansible>-<terraform>` — e.g. `alpine-13.0.0-1.15.8` | newest build of that exact pair of versions |
 
-Both versions appear in the tag because either can move independently — a rebuild picking up a newer Ansible with
-the same Terraform would otherwise silently reuse a tag. You can read either value yourself:
+Both versions appear in the version tag because either can move independently — a rebuild picking
+up a newer Ansible with the same Terraform would otherwise silently reuse a tag. Both are derived
+at build time by reading them out of the freshly built image, so they always reflect what is
+actually installed. You can read either value yourself:
 
 ```bash
-podman run --rm localhost/ansible-terraform:alpine-stable ansible-community --version
-podman run --rm localhost/ansible-terraform:alpine-stable terraform version
+podman run --rm docker.io/pdutton/ansible-terraform:alpine-stable ansible-community --version
+podman run --rm docker.io/pdutton/ansible-terraform:alpine-stable terraform version
 ```
 
-The eight tags that exist after a full build: `alpine-stable`, `alpine-development`, `ubuntu-stable`,
-`ubuntu-development`, `alpine-13.0.0-1.15.8`, `alpine-14.2.0-1.16.0-beta2`, `ubuntu-13.1.0-1.15.8`,
-`ubuntu-14.2.0-1.16.0-beta2`.
+The eleven tags after a full build:
 
-**These images are not published to any registry.** Both upstreams publish to Docker Hub; this repo does not yet.
+```
+alpine-stable        alpine-13.0.0-1.15.8          alpine
+alpine-development   alpine-14.2.0-1.16.0-beta2
+ubuntu-stable        ubuntu-13.1.0-1.15.8          ubuntu   latest
+ubuntu-development   ubuntu-14.2.0-1.16.0-beta2
+```
+
+### There is deliberately no intermediate tag
+
+container-ansible publishes `<os>-<major>` and container-terraform publishes `<line>`, between
+their channel tag and their version tag. This repo publishes no equivalent — no `alpine-13-1.15`,
+and no single-axis `alpine-13` or `alpine-1.15`.
+
+Two versions move independently here, and neither candidate survives that. A **single-axis** tag
+would not name an image: `alpine-13` would have to mean "Alpine, Ansible 13, and whatever Terraform
+was wired to the stable channel that day", silently asserting nothing about half the image, on a
+short tag people would reach for first. A **composite line** tag such as `alpine-13-1.15` is
+unambiguous but moves on exactly the same builds as `alpine-stable`, which is already the tag for
+"newest build of that channel".
+
+So every tag here either names a channel or names both versions exactly.
+
+### Every tag is mutable, including the version tags
+
+`alpine-13.0.0-1.15.8` looks like a pin. It is not. A rebuild that again resolves to that pair
+re-pushes the tag at a *new* image — and here that is not merely a base-OS package refresh but a
+wholly new composition, since both `FROM` lines are other repos' published tags and either can have
+moved underneath an unchanged version number.
+
+This is deliberate — it is how an upstream fix reaches someone who pinned a version — but it means
+this repo publishes no content-immutable tag at all. **If you need reproducibility, pin by
+digest**, which you can capture without a prior local pull:
+
+```bash
+skopeo inspect --format '{{.Digest}}' docker://docker.io/pdutton/ansible-terraform:alpine-stable
+```
+
+## Continuous Integration
+
+`.github/workflows/build.yml` builds and smoke-tests all four variants in parallel on every pull
+request, and additionally publishes them on a push to `master` or a `workflow_dispatch` run against
+`master`. Pull requests never receive registry credentials and never push.
+
+Publishing only ever happens from `master`. A manual `workflow_dispatch` run against another branch
+still builds and smoke-tests that branch, but publishes nothing — the tags here are mutable
+pointers shared by every consumer, and a branch build must not be able to overwrite them by
+accident. (This is an accident guard, not a security boundary: `workflow_dispatch` runs the
+workflow file from the selected ref, so a branch that also edits the `if:` conditions could still
+publish.)
+
+Nothing here automatically checks which Terraform channel a `*-stable` or `*-development`
+Containerfile's `COPY --from` actually pulls from — a miswired one would publish a Terraform
+prerelease as `ubuntu-stable`, `ubuntu`, and `latest` with every gate above green. The only
+mitigation is a by-hand check, run before merging since merging to `master` is what publishes;
+see `CLAUDE.md`'s `## Publishing` section for it.
+
+Publishing needs two repository secrets, `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`, which the
+workflow feeds to `podman login docker.io`. The token needs **write and delete** scope — delete is
+required by the `dockerhub-description` job, which replaces the Hub description rather than
+appending to it. A write-only token logs in and pushes all eleven tags fine, then fails that one
+job with an authorization error that reads like a wrong password rather than a wrong scope. A
+local `make push` needs the equivalent done by hand.
+
+CI builds pass `--pull`, so a CI publish always re-resolves both upstream images rather than
+reusing a cached layer. There is no scheduled rebuild, though: these images are composed entirely
+of upstream tags, so both inputs can move without anything in this repo changing, and a published
+image can sit arbitrarily far behind both. Refreshing them is a deliberate act — merge to `master`,
+or run the workflow from the Actions tab.
+
+A publish is also not atomic: if a job fails partway through a variant's tag loop, the tags
+already pushed in that run are live at the new image and the rest are stale until the job is
+re-run. See the comment above `push-%` in the `Makefile` for detail.
+
+### The Docker Hub overview page
+
+The page at [`pdutton/ansible-terraform`](https://hub.docker.com/r/pdutton/ansible-terraform) is
+generated from `DOCKERHUB-OVERVIEW.md` by the `dockerhub-description` job in the same workflow.
+**Do not edit that page in the Docker Hub web UI** — the next push to `master` overwrites it, along
+with the short description, which the job also sets.
 
 ## License
 
@@ -151,8 +258,5 @@ by this repo.
 
 The following are not implemented yet and should not be treated as available today:
 
-- Publishing these images to Docker Hub, and the CI to do it. Both upstreams already do this.
-- A tag scheme aligned with the upstreams'. container-ansible produces 15 tags and container-terraform 7,
-  including `latest`, `<os>`, and major/minor-line tags; this repo produces two per variant and no `latest`.
 - Multi-arch builds for both `amd64` and `arm64`.
 - Digest-pinning the upstream base images rather than tracking their tags.

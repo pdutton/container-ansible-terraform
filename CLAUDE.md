@@ -22,6 +22,7 @@ Variants: `alpine-stable`, `alpine-development`, `ubuntu-stable`,
 ```bash
 make build                 # build all four variants
 make test                  # build, then smoke-test all four
+make push                  # build, test, and publish all four to Docker Hub
 make build-alpine-stable   # one variant
 make test-alpine-stable    # one variant (builds first)
 make clean                 # remove this repo's tags
@@ -41,6 +42,63 @@ image while both inputs have moved. Use:
 make build PODMAN_BUILD_FLAGS="--pull"
 ```
 
+## Publishing
+
+Images go to `docker.io/pdutton/ansible-terraform`. `REGISTRY` overrides the
+destination; `LOCAL_IMAGE` (`localhost/$(IMAGE)`) is what every local reference
+uses, and no bare `$(IMAGE)` may be introduced as an image reference — a bare
+short name can resolve to a non-localhost repo, and the push source must not
+depend on that.
+
+The tag scheme lives in `TAG_SET_SH` in the Makefile and is expanded by both
+`tag-%` and `push-%`, so it is defined once. Two per variant — channel and
+`<os>-<ansible>-<terraform>` — plus `<os>` on the stable variants and `latest`
+on `$(LATEST_VARIANT)`: **eleven across the four**.
+
+**There is no intermediate tag** — no `alpine-13-1.15`, no single-axis
+`alpine-13` or `alpine-1.15`. Two versions move independently here, so a
+single-axis tag would assert nothing about half the image, and a composite line
+tag would move on exactly the same builds as the channel tag beside it.
+
+The composite `<ansible>-<terraform>` version is carried whole from `tag-%` to
+`push-%` via the `org.opencontainers.image.version` label, and split only to
+validate. That split needs a guard neither upstream has: `$${version\#*-}`
+returns the string unchanged when it contains no `-`, so a one-axis version
+would set both halves equal, pass both shape checks, and publish a version tag
+naming one axis. The `#` in that expansion must stay escaped — unescaped, it
+starts a Make comment and truncates the rest of `TAG_SET_SH` silently.
+
+CI (`.github/workflows/build.yml`) builds and smoke-tests on pull requests and
+publishes only from `master`. Both `make` invocations pass
+`PODMAN_BUILD_FLAGS="--pull"`; on an ephemeral runner that is belt-and-braces,
+but it makes the CI command the one that reproduces a publish locally.
+
+The Docker Hub overview page is generated from `DOCKERHUB-OVERVIEW.md` by the
+`dockerhub-description` job, which `needs: build` and so runs only when all four
+variants published. Nothing on Docker Hub is authoritative — edits made in its
+web UI are overwritten on the next push to `master`, short description included.
+`DOCKERHUB-OVERVIEW.md` duplicates parts of `README.md` for an audience that
+arrived without the repo; nothing cross-checks the two, so a change to the tag
+scheme or the aliases must be applied to both by hand. It deliberately names no
+version and no Ansible or Terraform line. Keep it that way — it is the one
+document here that no test or build step can catch drifting.
+
+See `docs/superpowers/specs/2026-08-09-dockerhub-publish-design.md` for the
+authority on the tag scheme, the no-intermediate-tag rule, the non-atomic push,
+and the registry coordinates. Read it before changing tags, the push, or CI.
+
+A publish is not atomic: `push-%`'s tag loop pushes one tag at a time, so a
+failure partway through leaves the tags already pushed in that run pointing at
+the new image and the rest still pointing at the old one. The failure is loud
+(non-zero exit), which is the requirement, but there is no rollback —
+re-running the job is what finishes the set.
+
+**Before merging, run the by-hand variant check** under *Do not add version or
+channel assertions to the smoke test* below. Merging to `master` is what
+publishes, and that check is the only thing that catches a miswired `COPY
+--from` sending a `*-stable` Containerfile at the wrong Terraform channel —
+nothing automated does.
+
 ## How versions are selected
 
 Not in this repo. The Ansible channel comes from the
@@ -48,10 +106,11 @@ Not in this repo. The Ansible channel comes from the
 `docker.io/pdutton/terraform:<channel>`; the `FROM` lines are the selectors and
 both are resolved upstream. To move a channel, change it there.
 
-Tags are read out of the built image and never typed: `version-tag-%` runs
+Tags are read out of the built image and never typed: `tag-%` runs
 `ansible-community --version` (the *bundle* version, not `ansible --version`,
-which reports core) and `terraform version`, producing
-`<os>-<ansible>-<terraform>`.
+which reports core) and `terraform version`, joins them into one composite
+`<ansible>-<terraform>` version, and derives the whole tag set from it. See
+Publishing above.
 
 ## Do not add version or channel assertions to the smoke test
 
@@ -65,9 +124,17 @@ the guard somewhere other than where the declaration lives: this repo would then
 need a matching bump every time an upstream channel moved, and would fail its
 build over a correct upstream change.
 
-The accepted consequence: nothing automated catches a miswired `COPY --from`
-pulling the wrong Terraform channel. Check by hand after touching a
-Containerfile's `FROM` lines:
+The accepted consequence, and it is larger now that this repo publishes:
+nothing automated catches a miswired `COPY --from` pulling the wrong Terraform
+channel. A `*-stable` Containerfile wrongly pointing at
+`pdutton/terraform:development` publishes a prerelease as `ubuntu-stable`,
+`ubuntu` and `latest`, and every gate on the path passes — the smoke test, the
+shape guards, the tag math — because the version tag it produces is wrong but
+perfectly self-consistent.
+
+The mitigation is procedural. **Check by hand before merging**, not merely after
+touching a Containerfile's `FROM` lines, because merging to `master` is what
+publishes:
 
 ```bash
 for v in alpine-stable alpine-development ubuntu-stable ubuntu-development; do
@@ -77,8 +144,11 @@ for v in alpine-stable alpine-development ubuntu-stable ubuntu-development; do
 done
 ```
 
-Both `*-stable` rows must show a plain Terraform version with Ansible 13.x; both
-`*-development` rows a `-beta`/`-rc` version with Ansible 14.x.
+Both `*-stable` rows must show a plain Terraform version alongside the stable
+channel's Ansible bundle version; both `*-development` rows a `-beta`/`-rc`
+Terraform version alongside the development channel's Ansible bundle version.
+The two channels' Ansible majors are not named here on purpose — they change
+upstream, and a check that hardcoded them would go stale at the next bump.
 
 ## Conventions
 

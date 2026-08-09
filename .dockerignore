@@ -5,3 +5,6 @@ Makefile
 README.md
 LICENSE
 CLAUDE.md
+.github/
+.superpowers/
+DOCKERHUB-OVERVIEW.md
